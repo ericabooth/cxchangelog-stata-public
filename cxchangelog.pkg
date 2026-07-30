@@ -1,0 +1,20 @@
+v 3
+d cxchangelog: rebuild a cross-wave survey codebook from a long-format crosswalk
+d
+d A survey that runs for years accumulates reworded questions, added
+d items, and dropped items. cxchangelog reads a long-format crosswalk
+d of the instrument (one row per concept per wave, in .xlsx or .csv)
+d and regenerates the codebook: an items-by-wave grid of question
+d wording, per-wave counts of what was added, removed, and reworded,
+d and a diff against a frozen prior vintage of the crosswalk. The
+d data in memory are preserved and restored untouched.
+d
+d Requires: Stata 16.0 or newer
+d
+d Author: Eric A. Booth, Sr Researcher, Texas 2036
+d Support: eric.a.booth@gmail.com
+d
+d Distribution-Date: 20260706
+d
+f cxchangelog.ado
+f cxchangelog.sthlp
