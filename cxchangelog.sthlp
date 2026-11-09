@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 0.1.0  2026-07-06}{...}
+{* *! version 0.1.1  2026-11-09}{...}
 {viewerjumpto "Syntax" "cxchangelog##syntax"}{...}
 {viewerjumpto "Description" "cxchangelog##description"}{...}
 {viewerjumpto "Options" "cxchangelog##options"}{...}
@@ -28,6 +28,10 @@
 concept per wave, saved as {cmd:.xlsx}, {cmd:.xls}, or {cmd:.csv}.  Each
 {it:column} argument names a column of that file (as imported by
 {help import excel} or {help import delimited}), not a variable in memory.
+A {cmd:.csv} crosswalk is read with {cmd:bindquote(strict)}, so a quoted
+wording or option list that contains a line break stays in one cell (0.1.0
+split such a cell into fragment rows and silently kept only the first line),
+subject to the stray-quote rule described under {opt strictquotes}.
 
 {synoptset 24 tabbed}{...}
 {synopthdr}
@@ -45,10 +49,11 @@ concept per wave, saved as {cmd:.xlsx}, {cmd:.xls}, or {cmd:.csv}.  Each
 {synopt :{cmd:out(}{it:stub}{cmd:)}}output file stub; default is the input filename plus {it:_codebook}{p_end}
 {synopt :{cmd:csv}}write one .csv per table instead of one multi-sheet .xlsx{p_end}
 {synopt :{cmd:replace}}overwrite existing output files{p_end}
+{synopt :{cmdab:strictq:uotes}}skip the stray-quote rule for a {cmd:.csv}: keep strict quote binding, no fallback{p_end}
 
 {syntab :Planned for v0.2 (not yet available)}
-{synopt :{cmd:highlight(}{it:...}{cmd:)}}highlight a vintage in the workbook; exits with an error in 0.1.0{p_end}
-{synopt :{cmd:code(}{it:...}{cmd:)}}per-cell lifecycle codes; exits with an error in 0.1.0{p_end}
+{synopt :{cmd:highlight(}{it:...}{cmd:)}}highlight a vintage in the workbook; exits with an error in 0.1.x{p_end}
+{synopt :{cmd:code(}{it:...}{cmd:)}}per-cell lifecycle codes; exits with an error in 0.1.x{p_end}
 {synoptline}
 
 
@@ -118,6 +123,46 @@ typed in {cmd:out()} is stripped first.{p_end}
 {phang}{cmd:replace} permits overwriting; without it an existing output file
 stops the command with error 602.{p_end}
 
+{phang}{opt strictquotes} skips the stray-quote rule below: a {cmd:.csv}
+crosswalk (and a {cmd:.csv} {cmd:compare()} vintage) is read with
+{cmd:bindquote(strict)}, with no check and no fallback to loose binding.  The
+option has no effect on {cmd:.xlsx} or {cmd:.xls} files.{p_end}
+
+{pstd}{bf:The stray-quote rule.}  A {cmd:.csv} is read once with
+{cmd:bindquote(strict)}, so a quoted wording that contains the delimiter or a
+line break stays one cell.  Strict binding also treats one unmatched double
+quote, such as the inch mark in {cmd:Screen size 5" or more?}, as the start of
+a quoted field, so the rows after it can fold into a single cell and the
+codebook silently loses concepts.  Unless {opt strictquotes} is given,
+{cmd:cxchangelog} checks the strict result:{p_end}
+
+{p 8 10 2}o  If no string cell contains a line break, the strict result is
+kept.  The file is read once and nothing is printed.{p_end}
+{p 8 10 2}o  Otherwise each cell that contains a line break is split at its
+line breaks.  A line after the first {it:looks like a data row} when it holds
+at least {it:k}-1 delimiters, where {it:k} is the number of columns of the
+strict read and the delimiter is the one of comma, tab, semicolon, or pipe that
+splits the file's first line into {it:k} fields.  When {it:k} <= 2 that test is
+too weak, so the line must also start with an id-like token (digits,
+optionally after up to four letters and a {cmd:_} or {cmd:-}, such as
+{cmd:17}, {cmd:Q12}, {cmd:id_003}, or {cmd:2024-001}), and the first column of
+the file must hold such values.{p_end}
+{p 8 10 2}o  If any line looks like a data row, a stray quote joined rows.
+{cmd:cxchangelog} prints a warning that names the file, the row and column of
+the strict read where the joined cell starts, and the strict and loose row
+counts, then reads the file again with the default loose binding and keeps
+that result.  Every row survives, but the cell that holds the stray quote runs
+to the end of its line, so repair that cell upstream.{p_end}
+{p 8 10 2}o  If no line looks like a data row, the line breaks are genuine
+multi-line wording: the strict result is kept and nothing is printed.{p_end}
+
+{pstd}A file with both a genuine multi-line wording and a stray quote gets the
+warning and the loose result: the stray-quote reading wins, so the multi-line
+wording splits too (its fragment rows are dropped as unusable).  Repair the
+stray quote upstream, or save the crosswalk as {cmd:.xlsx}.  A genuine
+multi-line wording whose later line happens to hold {it:k}-1 delimiters is also
+read as a stray quote; specify {opt strictquotes} for such a file.{p_end}
+
 
 {marker output}{...}
 {title:Output}
@@ -183,7 +228,7 @@ frozen crosswalk:{p_end}
 {bf:What counts as a change.}  {cmd:reworded} compares consecutive fielded
 waves.  An item that skips a wave and returns with new wording is counted as
 removed and then added, not reworded.  Changes in {cmd:options()} text alone
-are not counted as rewordings in 0.1.0; they are visible in the
+are not counted as rewordings in 0.1.x; they are visible in the
 {cmd:options_by_wave} sheet.
 
 {pstd}
@@ -195,7 +240,7 @@ the first worksheet of an .xlsx input is read.
 {pstd}
 {bf:Deferred to v0.2.}  {cmd:highlight()} and {cmd:code()} (per-cell lifecycle
 styling and codes in the workbook) are accepted in the syntax but exit with
-error 198 in 0.1.0.
+error 198 in 0.1.x.
 
 
 {title:Author}

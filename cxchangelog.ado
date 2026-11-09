@@ -1,5 +1,14 @@
-*! version 0.1.0  20260706  Eric A. Booth, Sr Researcher, Texas 2036
+*! version 0.1.1  20261109  Eric A. Booth, Sr Researcher, Texas 2036
 *! cxchangelog: rebuild a cross-wave survey codebook from a long-format crosswalk
+*! 0.1.1: .csv crosswalks (and compare() vintages) are read with
+*!        bindquote(strict), so wording or option lists with line breaks
+*!        stay in one cell instead of splitting into dropped fragment rows.
+*!        A stray-quote rule guards it: when a cell has a line break and
+*!        a later line of that cell looks like a data row (at least k-1
+*!        delimiters for k columns; for k <= 2 also an id-like leading
+*!        token), an unmatched quote such as an inch mark joined rows, so
+*!        cxchangelog warns and uses loose binding.  Otherwise strict is
+*!        kept silently.  strictquotes skips the rule.
 *
 *  version 16.0: no feature above the 16.0 baseline is required; 16.0 is the
 *  floor the package is tested against.  marksample is not used because the
@@ -11,15 +20,16 @@ program define cxchangelog, rclass
 
     syntax using/ , WAve(name) CONcept(name) WORDing(name)          ///
         [ OPTions(name) STudy(name) SUMmary COMPare(string)         ///
-          OUT(string) CSV REPlace HIGHlight(string) CODE(string) ]
+          OUT(string) CSV REPlace STRICTQuotes                   ///
+          HIGHlight(string) CODE(string) ]
 
     * ---- options deferred to a later release --------------------------------
     if `"`highlight'"' != "" {
-        di as err "option highlight() is not implemented in cxchangelog 0.1.0; lifecycle highlighting is planned for v0.2"
+        di as err "option highlight() is not implemented in cxchangelog 0.1.x; lifecycle highlighting is planned for v0.2"
         exit 198
     }
     if `"`code'"' != "" {
-        di as err "option code() is not implemented in cxchangelog 0.1.0; lifecycle codes are planned for v0.2"
+        di as err "option code() is not implemented in cxchangelog 0.1.x; lifecycle codes are planned for v0.2"
         exit 198
     }
 
@@ -90,10 +100,8 @@ program define cxchangelog, rclass
     * ---- everything below runs on a scratch copy; user data are untouched -----
     preserve
 
-    quietly {
-        if "`ext'" == ".csv" import delimited `"`using'"', varnames(1) clear
-        else import excel `"`using'"', firstrow clear
-    }
+    if "`ext'" == ".csv" _cxc_qguard `"`using'"', varnames(1) `strictquotes'
+    else quietly import excel `"`using'"', firstrow clear
 
     * mapped columns must exist in the imported file
     foreach o in wave concept wording options study {
@@ -178,9 +186,9 @@ program define cxchangelog, rclass
             keep _cxconcept _cxwkey _cxwnum _cxword
             tempfile fcur
             save `fcur'
-            if "`pext'" == ".csv" import delimited `"`compare'"', varnames(1) clear
-            else import excel `"`compare'"', firstrow clear
         }
+        if "`pext'" == ".csv" _cxc_qguard `"`compare'"', varnames(1) `strictquotes'
+        else quietly import excel `"`compare'"', firstrow clear
         foreach o in wave concept wording {
             capture confirm variable ``o''
             if _rc {
@@ -290,7 +298,7 @@ program define cxchangelog, rclass
     }
 
     * ---- header -----------------------------------------------------------------------
-    di as txt _n "cxchangelog 0.1.0"
+    di as txt _n "cxchangelog 0.1.1"
     di as txt "  crosswalk: " as res `"`using'"'
     di as txt "  concepts: " as res `n_concepts' as txt "    waves: " as res `n_waves'
     di as txt "  wave-over-wave: " as res `n_added' as txt " added, "  ///
@@ -347,6 +355,250 @@ program define cxchangelog, rclass
     else return local outfile `"`f_items'"'
 end
 
+
+* ---------------------------------------------------------------------------
+* _cxc_qguard: import a delimited file under the stray-quote rule.  The same
+* helper, with the same logic, ships in combineall, cxchangelog and
+* convertanything (only the _cxc_ name prefix differs).
+*   1. Import once with bindquote(strict) maxquotedrows(unlimited), so a
+*      quoted field that spans lines stays one cell.
+*   2. strictquotes: keep the strict result; no check, no fallback.
+*   3. Fast path: if no string cell contains a line break, keep the strict
+*      result.  The file is read once and nothing is printed.
+*   4. Otherwise split each cell that contains a line break at its line
+*      breaks.  A line after the first looks like a data row of this file
+*      when it holds at least k-1 delimiters (k = number of columns of the
+*      strict import).  When k <= 2 that is too weak, so the line must also
+*      start with an id-like token (digits, optionally after up to four
+*      letters and a _ or -, such as 17, Q12, id_003 or 2024-001) and the
+*      file's first column must hold such values.
+*      - Some line looks like a data row: an unmatched quote (such as the
+*        inch mark in 5" screen) joined rows.  Warn, naming the file, the
+*        row and column where the joined cell starts, and the strict and
+*        loose row counts, then import again with the default loose binding
+*        and keep that result.  This also holds when the file has genuine
+*        multi-line fields as well: the stray-quote reading wins.
+*      - No line does: the breaks are genuine multi-line text.  Keep the
+*        strict result and print nothing.
+* Leaves in the caller: qg_status (clean, multiline, stray or forced),
+* qg_nread (imports run, 1 or 2), qg_nstrict, qg_nloose, qg_k, qg_obs and
+* qg_var.  nowarn suppresses the warning (the caller prints its own).
+* ---------------------------------------------------------------------------
+program define _cxc_qguard
+    version 16
+    gettoken fname 0 : 0, parse(" ,")
+    syntax , [STRICTQuotes NOWARN DELIMiters(string asis) *]
+    local dl `delimiters'
+    if `"`delimiters'"' != "" local options `"`options' delimiters(`delimiters')"'
+    c_local qg_status ""
+    c_local qg_nloose ""
+    c_local qg_obs ""
+    c_local qg_var ""
+    quietly import delimited using `"`macval(fname)'"', `options' ///
+        bindquote(strict) maxquotedrows(unlimited) clear
+    local nstrict = _N
+    local k = c(k)
+    c_local qg_nread 1
+    c_local qg_nstrict `nstrict'
+    c_local qg_k `k'
+    if "`strictquotes'" != "" {
+        c_local qg_status forced
+        exit
+    }
+    mata: _cxc_qgscan(st_local("fname"), st_local("dl"))
+    if "`qg_ml'" == "0" {
+        c_local qg_status clean
+        exit
+    }
+    if "`qg_hit'" == "0" {
+        c_local qg_status multiline
+        exit
+    }
+    quietly import delimited using `"`macval(fname)'"', `options' clear
+    local nloose = _N
+    c_local qg_status stray
+    c_local qg_nread 2
+    c_local qg_nloose `nloose'
+    c_local qg_obs `qg_obs'
+    c_local qg_var `qg_var'
+    if "`nowarn'" == "" {
+        di as err "warning:" as txt `" stray-quote check on file `fname'"'
+        di as txt "  In the strict read, the quoted cell in row " as res `qg_obs' ///
+            as txt ", column " as res "`qg_var'" as txt " runs on into lines"
+        di as txt "  that look like data rows (each has at least " as res `k' - 1 ///
+            as txt `" delimiter(s)): an unmatched quote, such as the inch mark in 5" screen, joined rows."'
+        di as txt "  strict quote binding read " as res `nstrict' as txt ///
+            " row(s); loose binding read " as res `nloose' as txt ///
+            " row(s); using the loose result."
+        di as txt "  If those lines are text inside one quoted field, " ///
+            "specify {bf:strictquotes} to keep strict binding."
+    }
+end
+
+mata:
+// stray-quote rule (see _cxc_qguard): sets locals qg_ml (some string cell
+// has a line break), qg_hit (some later line looks like a data row), and
+// qg_obs/qg_var (the first such cell: lowest row, then leftmost column)
+void _cxc_qgscan(string scalar fname, string scalar dl)
+{
+    real scalar k, j, i, r, anchor, bestr, bestj, found
+    real vector ix
+    string colvector s
+    string scalar d
+
+    st_local("qg_ml", "0")
+    st_local("qg_hit", "0")
+    k = st_nvar()
+    bestr = bestj = .
+    found = 0
+    anchor = 1
+    d = ","
+    for (j = 1; j <= k; j++) {
+        if (!st_isstrvar(j)) continue
+        s = st_sdata(., j)
+        ix = selectindex((strpos(s, char(10)) :+ strpos(s, char(13))) :> 0)
+        if (length(ix) == 0) continue
+        if (!found) {
+            found = 1
+            st_local("qg_ml", "1")
+            d = _cxc_qgdelim(fname, dl, k)
+            if (k <= 2) anchor = _cxc_qganchor()
+        }
+        if (!anchor) return
+        for (i = 1; i <= length(ix); i++) {
+            r = ix[i]
+            if (r >= bestr) break
+            if (_cxc_qgrowline(s[r], d, k)) {
+                bestr = r
+                bestj = j
+                break
+            }
+        }
+    }
+    if (bestr < .) {
+        st_local("qg_hit", "1")
+        st_local("qg_obs", strofreal(bestr))
+        st_local("qg_var", st_varname(bestj))
+    }
+}
+
+// 1 if a line after the first line of cell c looks like a data row
+real scalar _cxc_qgrowline(string scalar c, string scalar d, real scalar k)
+{
+    string scalar t, line
+    real scalar p, first
+
+    t = subinstr(c, char(13) + char(10), char(10))
+    t = subinstr(t, char(13), char(10))
+    first = 1
+    while (1) {
+        p = strpos(t, char(10))
+        if (p) {
+            line = substr(t, 1, p - 1)
+            t = substr(t, p + 1, .)
+        }
+        else line = t
+        if (!first) {
+            if (_cxc_qgcount(line, d) >= k - 1) {
+                if (k > 2) return(1)
+                if (_cxc_qgidlike(_cxc_qglead(line, d, k))) return(1)
+            }
+        }
+        first = 0
+        if (!p) return(0)
+    }
+    return(0)
+}
+
+// the delimiter: delimiters() when given, else the candidate (comma, tab,
+// semicolon, pipe) that splits the first line of the file into k fields,
+// else the most frequent candidate on that line, else comma
+string scalar _cxc_qgdelim(string scalar fname, string scalar dl, real scalar k)
+{
+    real scalar fh, j, n, best, bestn, p
+    string scalar buf
+    string rowvector cand
+
+    if (dl == char(92) + "t") return(char(9))
+    if (dl != "") return(dl)
+    cand = (",", char(9), ";", "|")
+    fh = _fopen(fname, "r")
+    if (fh < 0) return(",")
+    buf = fread(fh, 65536)
+    fclose(fh)
+    if (buf == J(0, 0, "")) return(",")
+    if (substr(buf, 1, 3) == char(239) + char(187) + char(191)) buf = substr(buf, 4, .)
+    p = strpos(buf, char(10))
+    if (p) buf = substr(buf, 1, p - 1)
+    p = strpos(buf, char(13))
+    if (p) buf = substr(buf, 1, p - 1)
+    best = 1
+    bestn = 0
+    for (j = 1; j <= cols(cand); j++) {
+        n = _cxc_qgcount(buf, cand[j])
+        if (k > 1 & n == k - 1) return(cand[j])
+        if (n > bestn) {
+            best = j
+            bestn = n
+        }
+    }
+    return(cand[best])
+}
+
+// number of delimiter characters in s (each character of d counts)
+real scalar _cxc_qgcount(string scalar s, string scalar d)
+{
+    real scalar j, n
+    n = 0
+    for (j = 1; j <= strlen(d); j++) {
+        n = n + strlen(s) - strlen(subinstr(s, substr(d, j, 1), ""))
+    }
+    return(n)
+}
+
+// the first field of a line (the whole line when k == 1)
+string scalar _cxc_qglead(string scalar line, string scalar d, real scalar k)
+{
+    real scalar j, p, q
+    if (k == 1) return(line)
+    p = strlen(line) + 1
+    for (j = 1; j <= strlen(d); j++) {
+        q = strpos(line, substr(d, j, 1))
+        if (q & q < p) p = q
+    }
+    return(substr(line, 1, p - 1))
+}
+
+// 1 if s is an id-like token: 17, Q12, id_003, 2024-001 (quotes allowed)
+real scalar _cxc_qgidlike(string scalar s)
+{
+    string scalar t
+    t = strtrim(s)
+    if (strlen(t) >= 2 & substr(t, 1, 1) == char(34) & substr(t, -1, 1) == char(34)) {
+        t = substr(t, 2, strlen(t) - 2)
+    }
+    return(ustrregexm(t, "^[A-Za-z]{0,4}[_-]?[0-9]+([._-][0-9]+)*$"))
+}
+
+// 1 if the first column holds id-like values (the file's row pattern,
+// needed when k <= 2): any nonmissing number, or any string whose first
+// line is id-like
+real scalar _cxc_qganchor()
+{
+    real scalar i, p
+    string colvector s
+    string scalar t
+    if (!st_isstrvar(1)) return(missing(st_data(., 1)) < st_nobs())
+    s = st_sdata(., 1)
+    for (i = 1; i <= rows(s); i++) {
+        t = subinstr(s[i], char(13), char(10))
+        p = strpos(t, char(10))
+        if (p) t = substr(t, 1, p - 1)
+        if (_cxc_qgidlike(t)) return(1)
+    }
+    return(0)
+}
+end
 
 * ---------------------------------------------------------------------------
 * _cxc_prep: standardize an imported crosswalk into _cx* working variables.

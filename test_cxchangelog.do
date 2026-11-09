@@ -1,5 +1,5 @@
 * ===========================================================================
-* test_cxchangelog.do -- test battery for cxchangelog v0.1.0
+* test_cxchangelog.do -- test battery for cxchangelog v0.1.1
 * Run in batch from any scratch directory:
 *     stata-mp -b do test_cxchangelog.do
 * Judge the run by the log: no r(NNN) errors, no "assertion is false".
@@ -220,6 +220,207 @@ export excel using "$cxtest/dup.xlsx", firstrow(variables) replace
 capture cxchangelog using "$cxtest/dup.xlsx", wave(wave) ///
     concept(concept_id) wording(q_text) out("$cxtest/dupout") replace
 assert _rc == 459
+
+* ---------------------------------------------------------------------------
+* 6b-6f. The stray-quote rule (0.1.1).  A .csv crosswalk is read with
+*     bindquote(strict).  When a cell has a line break and a later line of
+*     that cell looks like a data row (at least k-1 delimiters; for k <= 2
+*     also an id-like leading token), a stray quote joined rows: cxchangelog
+*     warns and uses loose binding.  Otherwise strict is kept silently.  The
+*     checks read warnings from text logs and call the private helper
+*     _cxc_qguard to count imports (it leaves qg_* locals).
+* ---------------------------------------------------------------------------
+capture program drop _cx_countin
+program define _cx_countin, rclass
+    args fn needle
+    mata: st_numscalar("r(hits)", ///
+        sum(strpos(cat(st_local("fn")), st_local("needle")) :> 0))
+    return scalar hits = r(hits)
+end
+* the helper is private to cxchangelog.ado; running the file defines it for
+* this do-file (discard first, so nothing is defined twice)
+discard
+capture program drop cxchangelog _cxc_qguard _cxc_prep
+quietly run "$pkgroot/cxchangelog.ado"
+local ls0 = c(linesize)
+set linesize 255                  // keep each warning line on one log line
+
+* 6b. quoted cells with line breaks (legitimate multi-line wording and option
+*     lists) stay one cell by default, with no warning and one import.
+*     0.1.0 split those cells into fragment rows, dropped the fragments, and
+*     kept only the text before the break.
+clear
+input str4 concept int wave str60 wording str40 options
+"q1" 1 "How safe do you feel?" "1=Very safe;2=Unsafe"
+"q1" 2 "How safe do you feel?" "X"
+"q2" 1 "X" "1=Good;2=Poor"
+"q2" 2 "In general, how is your health?" "1=Good;2=Poor"
+end
+replace options = "1=Very safe" + char(10) + "2=Unsafe" in 2
+replace wording = "In general," + char(10) + "how is your health?" in 3
+export delimited using "$cxtest/cw_ml.csv", quote replace
+quietly import delimited using "$cxtest/cw_ml.csv", varnames(1) clear
+assert _N > 4                        // loose binding splits the cells
+quietly log using "$cxtest/w_ml.log", text replace name(wml)
+cxchangelog using "$cxtest/cw_ml.csv", wave(wave) concept(concept) ///
+    wording(wording) options(options) summary ///
+    compare("$cxtest/cw_ml.csv") out("$cxtest/cwml") replace
+assert r(n_concepts) == 2 & r(n_waves) == 2
+assert r(n_diff) == 0
+quietly log close wml
+_cx_countin "$cxtest/w_ml.log" "warning:"
+assert r(hits) == 0
+import excel using "$cxtest/cwml.xlsx", sheet("items_by_wave") firstrow clear
+assert _N == 2
+assert w1 == "In general," + char(10) + "how is your health?" if concept == "q2"
+import excel using "$cxtest/cwml.xlsx", sheet("options_by_wave") firstrow clear
+assert w2 == "1=Very safe" + char(10) + "2=Unsafe" if concept == "q1"
+assert w1 == "1=Good;2=Poor" if concept == "q2"
+_cxc_qguard "$cxtest/cw_ml.csv", varnames(1)
+assert "`qg_status'" == "multiline" & `qg_nread' == 1 & _N == 4
+* strictquotes gives the same result (strictq is the minimum abbreviation)
+cxchangelog using "$cxtest/cw_ml.csv", wave(wave) concept(concept) ///
+    wording(wording) options(options) out("$cxtest/cwml") strictq replace
+assert r(n_concepts) == 2 & r(n_waves) == 2
+
+* 6c. a clean .csv (no line break in any cell): no warning, one import
+clear
+input str4 concept int wave str30 wording
+"q1" 1 "Plain wording"
+"q1" 2 "Plain wording, revised"
+end
+export delimited using "$cxtest/cw_ok.csv", quote replace
+quietly log using "$cxtest/w_ok.log", text replace name(wok)
+cxchangelog using "$cxtest/cw_ok.csv", wave(wave) concept(concept) ///
+    wording(wording) out("$cxtest/cwok") replace
+assert r(n_concepts) == 1 & r(n_changes) == 1
+quietly log close wok
+_cx_countin "$cxtest/w_ok.log" "warning:"
+assert r(hits) == 0
+_cxc_qguard "$cxtest/cw_ok.csv", varnames(1)
+assert "`qg_status'" == "clean" & `qg_nread' == 1 & _N == 2
+
+* 6d. a stray inch mark.  Strict binding alone folds q1 wave 2 and all of q2
+*     into one cell (2 concepts -> 1, r(n_changes) = 0); the rule finds
+*     data-row lines inside that cell, warns, and keeps the four loose rows.
+*     The same file as compare() is checked too.
+file open fh using "$cxtest/cw_inch.csv", write replace text
+file write fh "concept,wave,wording,options" _n
+file write fh `"q1,1,Screen size 5" or more?,1=Yes;2=No"' _n
+file write fh "q1,2,Screen size?,1=Yes;2=No" _n
+file write fh "q2,1,Health?,1=Good;2=Poor" _n
+file write fh "q2,2,Health?,1=Good;2=Poor" _n
+file close fh
+quietly import delimited using "$cxtest/cw_inch.csv", varnames(1) ///
+    bindquote(strict) maxquotedrows(unlimited) clear
+assert _N == 1                       // the failure the rule exists for
+quietly log using "$cxtest/w_inch.log", text replace name(winch)
+cxchangelog using "$cxtest/cw_inch.csv", wave(wave) concept(concept) ///
+    wording(wording) options(options) summary ///
+    compare("$cxtest/cw_inch.csv") out("$cxtest/cwinch") replace
+assert r(n_concepts) == 2 & r(n_waves) == 2
+assert r(n_changes) == 1             // q1 reworded in wave 2
+assert r(n_diff) == 0
+quietly log close winch
+_cx_countin "$cxtest/w_inch.log" "stray-quote check on file $cxtest/cw_inch.csv"
+assert r(hits) == 2                  // once for the crosswalk, once for compare()
+_cx_countin "$cxtest/w_inch.log" "In the strict read, the quoted cell in row 1, column wording runs on into lines"
+assert r(hits) == 2
+_cx_countin "$cxtest/w_inch.log" "strict quote binding read 1 row(s); loose binding read 4 row(s); using the loose result."
+assert r(hits) == 2
+import excel using "$cxtest/cwinch.xlsx", sheet("items_by_wave") firstrow clear
+assert _N == 2
+* loose binding runs the stray-quote cell to the end of its own line, so
+* that one cell still needs repair upstream; every other cell is intact
+assert w1 == `"Screen size 5" or more?,1=Yes;2=No"' if concept == "q1"
+assert w2 == "Screen size?" if concept == "q1"
+assert w1 == "Health?" & w2 == "Health?" if concept == "q2"
+quietly _cxc_qguard "$cxtest/cw_inch.csv", varnames(1) nowarn
+assert "`qg_status'" == "stray" & `qg_nread' == 2 & _N == 4
+assert `qg_nstrict' == 1 & `qg_nloose' == 4 & "`qg_var'" == "wording"
+* strictquotes forces strict binding with no fallback (the swallowed result)
+quietly log using "$cxtest/w_inch2.log", text replace name(winch2)
+cxchangelog using "$cxtest/cw_inch.csv", wave(wave) concept(concept) ///
+    wording(wording) options(options) out("$cxtest/cwinch") ///
+    strictquotes replace
+assert r(n_concepts) == 1 & r(n_changes) == 0
+quietly log close winch2
+_cx_countin "$cxtest/w_inch2.log" "warning:"
+assert r(hits) == 0
+
+* 6e. both in one file: a legitimate quoted line break and a stray quote.
+*     Documented rule: the stray-quote warning wins, so the loose result is
+*     kept (the multi-line wording splits too); strictquotes keeps the strict
+*     result.  Neither is right: such a file must be fixed upstream.
+file open fh using "$cxtest/cw_both.csv", write replace text
+file write fh "concept,wave,wording,options" _n
+file write fh `"q1,1,"In general,"' _n
+file write fh `"how is your health?",1=Good;2=Poor"' _n
+file write fh `"q1,2,Screen size 5" or more?,1=Yes;2=No"' _n
+file write fh "q2,1,Screen size?,1=Yes;2=No" _n
+file write fh "q2,2,Health?,1=Good;2=Poor" _n
+file close fh
+quietly import delimited using "$cxtest/cw_both.csv", varnames(1) clear
+local nloose = _N
+quietly import delimited using "$cxtest/cw_both.csv", varnames(1) ///
+    bindquote(strict) maxquotedrows(unlimited) clear
+local nstrict = _N
+assert `nloose' > `nstrict'
+quietly log using "$cxtest/w_both.log", text replace name(wboth)
+cxchangelog using "$cxtest/cw_both.csv", wave(wave) concept(concept) ///
+    wording(wording) options(options) out("$cxtest/cwboth") replace
+assert r(n_concepts) == 2            // the split fragment rows are dropped
+quietly log close wboth
+_cx_countin "$cxtest/w_both.log" "warning:"
+assert r(hits) == 1
+_cx_countin "$cxtest/w_both.log" "In the strict read, the quoted cell in row 2, column wording"
+assert r(hits) == 1
+_cx_countin "$cxtest/w_both.log" "strict quote binding read `nstrict' row(s); loose binding read `nloose' row(s)"
+assert r(hits) == 1
+quietly _cxc_qguard "$cxtest/cw_both.csv", varnames(1) nowarn
+assert "`qg_status'" == "stray" & _N == `nloose'
+quietly log using "$cxtest/w_both2.log", text replace name(wboth2)
+cxchangelog using "$cxtest/cw_both.csv", wave(wave) concept(concept) ///
+    wording(wording) options(options) out("$cxtest/cwboth") ///
+    strictquotes replace
+quietly log close wboth2
+_cx_countin "$cxtest/w_both2.log" "warning:"
+assert r(hits) == 0
+
+* 6f. tab-delimited variants (a .csv file whose delimiter is a tab; import
+*     delimited detects it, and so does the rule).  Wording whose second
+*     line has two commas (k-1 for k = 3, were commas the delimiter) stays
+*     one cell; a stray inch mark warns.
+file open fh using "$cxtest/cw_tab.csv", write replace text
+file write fh "concept" _tab "wave" _tab "wording" _n
+file write fh "q1" _tab "1" _tab `""In general,"' _n
+file write fh `"how, overall, is your health?""' _n
+file write fh "q1" _tab "2" _tab "Health?" _n
+file close fh
+quietly log using "$cxtest/w_tab.log", text replace name(wtab)
+cxchangelog using "$cxtest/cw_tab.csv", wave(wave) concept(concept) ///
+    wording(wording) out("$cxtest/cwtab") replace
+assert r(n_concepts) == 1 & r(n_changes) == 1
+quietly log close wtab
+_cx_countin "$cxtest/w_tab.log" "warning:"
+assert r(hits) == 0
+_cxc_qguard "$cxtest/cw_tab.csv", varnames(1)
+assert "`qg_status'" == "multiline" & _N == 2
+assert wording[1] == "In general," + char(10) + "how, overall, is your health?"
+file open fh using "$cxtest/cw_tabinch.csv", write replace text
+file write fh "concept" _tab "wave" _tab "wording" _n
+file write fh "q1" _tab "1" _tab `"Screen 5" or more?"' _n
+file write fh "q1" _tab "2" _tab "Screen size?" _n
+file write fh "q2" _tab "1" _tab "Health?" _n
+file close fh
+quietly log using "$cxtest/w_tab2.log", text replace name(wtab2)
+cxchangelog using "$cxtest/cw_tabinch.csv", wave(wave) concept(concept) ///
+    wording(wording) out("$cxtest/cwtab") replace
+assert r(n_concepts) == 2
+quietly log close wtab2
+_cx_countin "$cxtest/w_tab2.log" "strict quote binding read 1 row(s); loose binding read 3 row(s)"
+assert r(hits) == 1
+set linesize `ls0'
 
 * ---------------------------------------------------------------------------
 * 7. Clean up every file this test created
