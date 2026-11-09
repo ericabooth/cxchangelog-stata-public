@@ -1,5 +1,9 @@
-*! version 0.1.1  20261109  Eric A. Booth, Sr Researcher, Texas 2036
+*! version 0.1.2  20261109  Eric A. Booth, Sr Researcher, Texas 2036
 *! cxchangelog: rebuild a cross-wave survey codebook from a long-format crosswalk
+*! 0.1.2: tempfiles are quoted, so a temp folder whose path has a space
+*!        works; csv output quotes every string cell, so wording with a
+*!        line break stays one CSV field; a wave in which every wording is
+*!        blank still counts as a wave (its items are not fielded there).
 *! 0.1.1: .csv crosswalks (and compare() vintages) are read with
 *!        bindquote(strict), so wording or option lists with line breaks
 *!        stay in one cell instead of splitting into dropped fragment rows.
@@ -144,7 +148,7 @@ program define cxchangelog, rclass
     }
 
     tempfile base
-    quietly save `base'
+    quietly save `"`base'"'
 
     * ---- wave-over-wave change counts (always computed; feeds r() results) -----
     * An item is "fielded" in a wave when its wording cell is nonblank.  The
@@ -153,6 +157,7 @@ program define cxchangelog, rclass
     quietly {
         keep _cxconcept _cxworder _cxword
         reshape wide _cxword, i(_cxconcept) j(_cxworder)
+        _cxc_fillw _cxword `n_waves'
         reshape long _cxword, i(_cxconcept) j(_cxworder)
         gen byte _cxpres = _cxword != ""
         sort _cxconcept _cxworder
@@ -175,17 +180,17 @@ program define cxchangelog, rclass
         order wave fielded added removed reworded
         drop _cxworder
         tempfile fsum
-        save `fsum'
+        save `"`fsum'"'
     }
 
     * ---- diff against a prior crosswalk vintage ---------------------------------
     local n_diff 0
     if `"`compare'"' != "" {
         quietly {
-            use `base', clear
+            use `"`base'"', clear
             keep _cxconcept _cxwkey _cxwnum _cxword
             tempfile fcur
-            save `fcur'
+            save `"`fcur'"'
         }
         if "`pext'" == ".csv" _cxc_qguard `"`compare'"', varnames(1) `strictquotes'
         else quietly import excel `"`compare'"', firstrow clear
@@ -206,9 +211,9 @@ program define cxchangelog, rclass
             keep _cxconcept _cxwkey _cxword
             rename _cxword _cxpriorword
             tempfile fprior
-            save `fprior'
-            use `fcur', clear
-            merge 1:1 _cxconcept _cxwkey using `fprior'
+            save `"`fprior'"'
+            use `"`fcur'"', clear
+            merge 1:1 _cxconcept _cxwkey using `"`fprior'"'
             gen status = cond(_merge == 1, "added",      ///
                 cond(_merge == 2, "removed",             ///
                 cond(_cxword != _cxpriorword, "reworded", "same")))
@@ -220,13 +225,13 @@ program define cxchangelog, rclass
                    (concept wave current_wording prior_wording)
             order concept wave status prior_wording current_wording
             tempfile fdiff
-            save `fdiff'
+            save `"`fdiff'"'
         }
     }
 
     * ---- items-by-wave sheet ------------------------------------------------------
     quietly {
-        use `base', clear
+        use `"`base'"', clear
         keep _cxconcept _cxworder _cxword _cxstudy
         local ivars _cxconcept
         if "`study'" != "" {
@@ -235,6 +240,7 @@ program define cxchangelog, rclass
         }
         else drop _cxstudy
         reshape wide _cxword, i(`ivars') j(_cxworder)
+        _cxc_fillw _cxword `n_waves'
         forvalues i = 1/`n_waves' {
             rename _cxword`i' `wname`i''
             label variable `wname`i'' `"wording in wave `wlab`i''"'
@@ -248,15 +254,16 @@ program define cxchangelog, rclass
             export excel using `"`f_book'"', firstrow(variables) ///
                 sheet("items_by_wave") replace
         }
-        else export delimited using `"`f_items'"', replace
+        else export delimited using `"`f_items'"', quote replace
     }
 
     * ---- options-by-wave sheet -----------------------------------------------------
     if "`options'" != "" {
         quietly {
-            use `base', clear
+            use `"`base'"', clear
             keep _cxconcept _cxworder _cxopt
             reshape wide _cxopt, i(_cxconcept) j(_cxworder)
+            _cxc_fillw _cxopt `n_waves'
             forvalues i = 1/`n_waves' {
                 rename _cxopt`i' `wname`i''
                 label variable `wname`i'' `"response options in wave `wlab`i''"'
@@ -268,19 +275,19 @@ program define cxchangelog, rclass
                 export excel using `"`f_book'"', firstrow(variables) ///
                     sheet("options_by_wave") sheetreplace
             }
-            else export delimited using `"`f_options'"', replace
+            else export delimited using `"`f_options'"', quote replace
         }
     }
 
     * ---- study coverage matrix ------------------------------------------------------
     if "`study'" != "" {
         quietly {
-            use `base', clear
+            use `"`base'"', clear
             gen byte _cxone = 1
             collapse (count) _cxone, by(_cxstudy _cxworder)
             reshape wide _cxone, i(_cxstudy) j(_cxworder)
             forvalues i = 1/`n_waves' {
-                capture confirm variable _cxone`i'
+                capture confirm variable _cxone`i', exact
                 if _rc gen _cxone`i' = 0
                 rename _cxone`i' `wname`i''
                 replace `wname`i'' = 0 if missing(`wname`i'')
@@ -293,12 +300,12 @@ program define cxchangelog, rclass
                 export excel using `"`f_book'"', firstrow(variables) ///
                     sheet("study_coverage") sheetreplace
             }
-            else export delimited using `"`f_coverage'"', replace
+            else export delimited using `"`f_coverage'"', quote replace
         }
     }
 
     * ---- header -----------------------------------------------------------------------
-    di as txt _n "cxchangelog 0.1.1"
+    di as txt _n "cxchangelog 0.1.2"
     di as txt "  crosswalk: " as res `"`using'"'
     di as txt "  concepts: " as res `n_concepts' as txt "    waves: " as res `n_waves'
     di as txt "  wave-over-wave: " as res `n_added' as txt " added, "  ///
@@ -306,25 +313,25 @@ program define cxchangelog, rclass
 
     * ---- per-wave summary ----------------------------------------------------------------
     if "`summary'" != "" {
-        quietly use `fsum', clear
+        quietly use `"`fsum'"', clear
         if "`csv'" == "" {
             quietly export excel using `"`f_book'"', firstrow(variables) ///
                 sheet("wave_summary") sheetreplace
         }
-        else quietly export delimited using `"`f_summary'"', replace
+        else quietly export delimited using `"`f_summary'"', quote replace
         di as txt _n "Per-wave changes relative to the previous wave (first wave is the baseline):"
         list wave fielded added removed reworded, noobs sep(0) abbreviate(12)
     }
 
     * ---- compare report ---------------------------------------------------------------------
     if `"`compare'"' != "" {
-        quietly use `fdiff', clear
+        quietly use `"`fdiff'"', clear
         if `n_diff' > 0 {
             if "`csv'" == "" {
                 quietly export excel using `"`f_book'"', firstrow(variables) ///
                     sheet("compare") sheetreplace
             }
-            else quietly export delimited using `"`f_compare'"', replace
+            else quietly export delimited using `"`f_compare'"', quote replace
         }
         di as txt _n "Differences vs " as res `"`compare'"' as txt ": " as res `n_diff'
         if `n_diff' > 0 list concept wave status, noobs sep(0) abbreviate(12)
@@ -601,6 +608,20 @@ real scalar _cxc_qganchor()
 end
 
 * ---------------------------------------------------------------------------
+* _cxc_fillw stub k: after reshape wide, add an empty string column stub#
+* for each wave 1..k that no fielded row reached (a wave whose wordings are
+* all blank), so every wave keeps its column
+* ---------------------------------------------------------------------------
+program define _cxc_fillw
+    version 16.0
+    args stub k
+    forvalues i = 1/`k' {
+        capture confirm variable `stub'`i', exact
+        if _rc quietly gen str1 `stub'`i' = ""
+    }
+end
+
+* ---------------------------------------------------------------------------
 * _cxc_prep: standardize an imported crosswalk into _cx* working variables.
 * Leaves one row per fielded concept-wave, with:
 *   _cxconcept  concept id (trimmed string)
@@ -670,8 +691,20 @@ program define _cxc_prep, rclass
     }
     else quietly gen _cxstudy = ""
 
+    * the wave list comes from every row with a concept and a wave, so a wave
+    * in which every wording is blank (nothing fielded) is still a wave
+    quietly drop if _cxconcept == "" | _cxwkey == ""
+    sort _cxwnum _cxconcept
+    quietly egen int _cxworder = group(_cxwnum)
+    quietly summarize _cxworder, meanonly
+    local k = r(max)
+    forvalues i = 1/`k' {
+        quietly levelsof _cxwkey if _cxworder == `i', local(kk)
+        local wkeys `"`wkeys' `kk'"'
+    }
+
     * usable rows: a fielded item has a concept, a wave, and a nonblank wording
-    quietly drop if _cxconcept == "" | _cxwkey == "" | _cxword == ""
+    quietly drop if _cxword == ""
     if _N == 0 {
         di as err "no usable rows in `tag': every row lacks a concept, a wave, or a wording"
         exit 2000
@@ -685,16 +718,9 @@ program define _cxc_prep, rclass
     }
 
     sort _cxwnum _cxconcept
-    quietly egen int _cxworder = group(_cxwnum)
     keep _cxconcept _cxwkey _cxwnum _cxworder _cxword _cxopt _cxstudy
 
     * results
-    quietly summarize _cxworder, meanonly
-    local k = r(max)
-    forvalues i = 1/`k' {
-        quietly levelsof _cxwkey if _cxworder == `i', local(kk)
-        local wkeys `"`wkeys' `kk'"'
-    }
     tempvar tg
     quietly egen byte `tg' = tag(_cxconcept)
     quietly count if `tg'

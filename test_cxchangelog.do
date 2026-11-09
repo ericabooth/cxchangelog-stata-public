@@ -1,13 +1,13 @@
 * ===========================================================================
-* test_cxchangelog.do -- test battery for cxchangelog v0.1.1
-* Run in batch from any scratch directory:
+* test_cxchangelog.do -- test battery for cxchangelog v0.1.2
+* Run in batch from the package folder, or set $pkgroot to it first:
 *     stata-mp -b do test_cxchangelog.do
 * Judge the run by the log: no r(NNN) errors, no "assertion is false".
 * ---------------------------------------------------------------------------
 * All paths live in globals set in this header (the package will move to its
 * own repo; edit $pkgroot only).
 * ===========================================================================
-global pkgroot "/Users/ebooth/Documents/GitHub/Book Manuscript:Applied Evaluation-Stata/cxchangelog-stata-public"
+if `"$pkgroot"' == "" global pkgroot "`c(pwd)'"
 
 version 16.0
 clear all

@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 0.1.1  2026-11-09}{...}
+{* *! version 0.1.2  2026-11-09}{...}
 {viewerjumpto "Syntax" "cxchangelog##syntax"}{...}
 {viewerjumpto "Description" "cxchangelog##description"}{...}
 {viewerjumpto "Options" "cxchangelog##options"}{...}
@@ -91,7 +91,9 @@ concept per wave; duplicates stop the command with error 459.{p_end}
 
 {phang}{cmd:wording(}{it:column}{cmd:)} names the question text.  A blank or
 missing wording means the concept was not fielded in that wave, so leave the
-cell empty (or omit the row) for waves in which an item did not run.{p_end}
+cell empty (or omit the row) for waves in which an item did not run.  A wave
+that appears in the crosswalk only with blank wordings still counts as a wave,
+with nothing fielded in it.{p_end}
 
 {phang}{cmd:options(}{it:column}{cmd:)} names the response-option text and adds
 an {cmd:options_by_wave} sheet with the same layout as the items sheet.{p_end}
@@ -117,7 +119,9 @@ exists.{p_end}
 command writes {it:stub}{cmd:.xlsx}; with {cmd:csv} it writes
 {it:stub}{cmd:_items.csv}, {it:stub}{cmd:_options.csv},
 {it:stub}{cmd:_coverage.csv}, {it:stub}{cmd:_summary.csv}, and
-{it:stub}{cmd:_compare.csv} as applicable.  Any .xlsx/.xls/.csv extension
+{it:stub}{cmd:_compare.csv} as applicable.  Every string cell of a .csv
+output is quoted, so a wording with a line break stays one field; read such a
+file back with {cmd:import delimited ..., bindquote(strict)}.  Any .xlsx/.xls/.csv extension
 typed in {cmd:out()} is stripped first.{p_end}
 
 {phang}{cmd:replace} permits overwriting; without it an existing output file

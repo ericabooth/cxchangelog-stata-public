@@ -128,6 +128,7 @@ See `help cxchangelog` for details on every option.
 
 ## Changes
 
+- **0.1.2 (2026-11-09):** temporary files are quoted, so `cxchangelog` works when the temp folder path contains a space (0.1.1 stopped with `invalid 'dir'`, r(198)). With `csv`, every string cell is quoted, so a wording or option list with a line break stays one CSV field; read such files back with `import delimited ..., bindquote(strict)`. A wave that appears in the crosswalk only with blank wordings now counts as a wave with nothing fielded, so an item that skips it is counted as removed and then added, as documented.
 - **0.1.1 (2026-11-09):** a `.csv` crosswalk, and a `.csv` `compare()` vintage, are read with `bindquote(strict)`. In 0.1.0 a quoted question wording or option list that contained a line break split into fragment rows; the fragments were dropped as unusable and the codebook kept only the text before the break, with no error.
   A stray-quote rule catches an unmatched quote such as an inch mark: when a line inside a multi-line cell looks like a data row (at least k-1 delimiters; for k <= 2 also an id-like leading token), `cxchangelog` warns and keeps the loose result. Genuine multi-line wordings keep the strict result silently, and a file with no line breaks in any cell is read once. The new `strictquotes` option skips the rule.
 
